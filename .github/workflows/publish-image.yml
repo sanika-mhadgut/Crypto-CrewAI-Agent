@@ -1,0 +1,95 @@
+# Workflow name that describes the purpose
+name: Crypto-CrewAI-Agent Image Build and Publish
+
+# Trigger workflow on push to main branch only
+on:
+  push:
+    branches:
+      - 'main'
+    paths:
+      - '**'
+      - '.github/workflows/publish-image.yml'
+
+# Environment variables used throughout the workflow
+env:
+  REGISTRY: ghcr.io
+  MAJOR_MINOR: 0.0
+  REPO_OWNER: ackuity
+
+# Define the jobs to be executed
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # Checkout the repository code
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Login to GitHub Container Registry
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      # Prepare repository owner and image name
+      - name: Prepare
+        id: prep
+        run: |
+          REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_owner_lower=${REPO_OWNER_LOWER}" >> $GITHUB_OUTPUT
+
+          # Set image name for Crypto-CrewAI-Agent
+          IMAGE_NAME="crypto-crewai-agent"
+          BRANCH_NAME="${{ github.ref_name }}"
+
+          echo "image_name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
+          echo "branch_name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          echo "Using image name: ${IMAGE_NAME} for branch: ${BRANCH_NAME}"
+
+      # Generate version number
+      - name: Get version
+        id: version
+        run: |
+          LATEST_TAG=$(git tag -l "${{ env.MAJOR_MINOR }}.*" | sort -V | tail -n 1)
+          if [ -z "$LATEST_TAG" ]; then
+            NEW_VERSION="${{ env.MAJOR_MINOR }}.1"
+          else
+            PATCH=$(echo $LATEST_TAG | cut -d. -f3)
+            NEW_PATCH=$((PATCH + 1))
+            NEW_VERSION="${{ env.MAJOR_MINOR }}.$NEW_PATCH"
+          fi
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+      # Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push Docker image
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REPO_OWNER }}/${{ steps.prep.outputs.image_name }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.REPO_OWNER }}/${{ steps.prep.outputs.image_name }}:latest
+            ${{ env.REGISTRY }}/${{ env.REPO_OWNER }}/${{ steps.prep.outputs.image_name }}:main
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Create git tag for the version
+      - name: Create git tag
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag -a "${{ steps.version.outputs.version }}" -m "Release version ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
