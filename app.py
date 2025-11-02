@@ -87,7 +87,14 @@ def run_crypto_agent(user_query: str, user_id: str = "anonymous"):
         metadata={"search_links": links, "reasoning": reasoning},
     )
 
-    return result
+    # Extract final text safely from CrewAI or Langfuse-traced output
+    if hasattr(result, "raw"):
+        return result.raw
+    elif isinstance(result, dict) and "raw" in result:
+        return result["raw"]
+    else:
+        return str(result)
+
 
 
 if __name__ == "__main__":
